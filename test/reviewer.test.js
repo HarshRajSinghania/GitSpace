@@ -21,12 +21,7 @@ describe('Repo Reviewer Engine', () => {
         };
 
         const languagesData = { 'C': 180000, 'Makefile': 2500 };
-        const commitsData = [
-            { commit: { message: 'feat: optimize spatial partitioning' } },
-            { commit: { message: 'fix: pointer bounds check' } }
-        ];
-
-        const review = analyzeRepo(repoData, languagesData, commitsData);
+        const review = analyzeRepo(repoData, languagesData);
 
         assert.ok(review.score >= 80, `Expected score >= 80, got ${review.score}`);
         assert.ok(['A+', 'A'].includes(review.grade), `Expected A/A+ grade, got ${review.grade}`);

@@ -31,8 +31,7 @@ async function init() {
       user = await res.json();
     } catch (e) { }
     // Decide signed-in vs signed-out before anything is shown, so signed-in people never see the front page.
-    if (user && user.authenticated) window.currentUserLogin = user.login;
-    else user = null;
+    if (!(user && user.authenticated)) user = null;
     window.authChecked = true;
     setGs({ authChecked: true, user });
 
@@ -53,7 +52,6 @@ async function init() {
         const repoData = await (await fetch('/api/repos')).json();
         if (repoData.authenticated === false) {
           console.warn('Session expired, falling back to signed out');
-          window.currentUserLogin = null;
           user = null;
           setGs({ user: null });
         } else if (repoData.success) {

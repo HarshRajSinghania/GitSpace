@@ -7,6 +7,12 @@ if (!connectionString || connectionString === 'sandbox') {
     console.error('FATAL: This stress test requires a real PostgreSQL database to run efficiently.');
     process.exit(1);
 }
+// It wipes every user and repo first. Refuse unless asked twice: a flag, and a database whose name says "test".
+const dbName = (() => { try { return new URL(connectionString).pathname.slice(1); } catch (e) { return ''; } })();
+if (!process.argv.includes('--yes-wipe') || !/(^|[_-])test($|[_-])/i.test(dbName)) {
+    console.error(`FATAL: this deletes ALL users and repos in "${dbName || '?'}". Run with --yes-wipe against a database whose name contains "test".`);
+    process.exit(1);
+}
 
 const pool = new Pool({
     connectionString,

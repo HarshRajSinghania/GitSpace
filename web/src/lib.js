@@ -17,7 +17,6 @@ export function safeHttpUrl(u) {
   try { const p = new URL(url); return /^https?:$/.test(p.protocol) ? p.href : null; } catch (e) { return null; }
 }
 
-export const langColor = l => (typeof window.langColor === 'function' ? window.langColor(l || 'Other') : '#6e7681');
 
 export async function getJSON(url, opts) {
   const res = await fetch(url, opts);

@@ -158,6 +158,7 @@ window.initDistance = function (username) {
 window.initDistance('guest');
 
 function gameLoop() {
+  requestAnimationFrame(gameLoop); // first, so one bad frame cannot stop the map for good
   window.drawnLabels = [];
 
   let moving = false;
@@ -209,23 +210,23 @@ function gameLoop() {
     if (autopilotTarget.startDist === undefined) autopilotTarget.startDist = dist;
     const stoppingDistance = autopilotTarget.item ? (autopilotTarget.item.type === 'repo' ? 80 : 150) : 5;
 
-    if (dist > 5000 && !warpActive && !window.attractMode) {
+    if (dist > 5000 && !warpActive) {
       warpActive = true;
       warpProgress = 0;
     }
 
-    const speedMultiplier = window.attractMode ? 0.3 : (warpActive ? 10 : 1);
+    const speedMultiplier = warpActive ? 10 : 1;
     const dynamicSpeed = Math.min(dist * 0.05, (30 / camera.zoom) * speedMultiplier);
 
     if (dist <= stoppingDistance || dist < dynamicSpeed) {
       if (warpActive) {
         warpActive = false;
       }
-      if (autopilotTarget.startDist > 1200 && window.startArrival && !window.attractMode) {
+      if (autopilotTarget.startDist > 1200 && window.startArrival) {
         const near = islands.find(i => Math.hypot(i.cx - player.x, i.cy - player.y) < i.islandRadius * 1.6);
         if (near) window.startArrival(near);
       }
-      if (autopilotTarget.item) openModalForItem(autopilotTarget.item);
+      if (autopilotTarget.item) window.openModalForItem?.(autopilotTarget.item);
       
       // We don't snap exactly to the target to avoid clipping
       autopilotTarget = null;
@@ -285,7 +286,7 @@ function gameLoop() {
   drawStars();
   drawSlipstream2D();
   for (const island of islands) drawIsland(island);
-  if (!window.attractMode) { drawPlayer(); drawMinimap(); drawCompass(); }
+  drawPlayer(); drawMinimap(); drawCompass();
   drawArrival();
   drawFPS();
 
@@ -319,48 +320,7 @@ function gameLoop() {
   updateHUD();
 
   animFrame++;
-  requestAnimationFrame(gameLoop);
 }
-
-// Attract mode: signed-out visitors watch a slow flyover between real islands and cannot steer or click.
-window.attractMode = false;
-let attractTimer = null;
-function attractHop() {
-  if (!window.attractMode) return;
-  const pool = islands.filter(i => Math.hypot(i.cx - player.x, i.cy - player.y) > 400);
-  const next = pool.length ? pool[Math.floor(Math.random() * pool.length)] : null;
-  autopilotTarget = next ? { x: next.cx, y: next.cy + next.islandRadius * 0.3 } : { x: player.x + 1500, y: player.y + 600 };
-  attractTimer = setTimeout(attractHop, 9000);
-}
-window.startAttractMode = function () {
-  if (window.attractMode) return;
-  window.attractMode = true;
-  targetCamera.zoom = 0.45;
-  clearTimeout(attractTimer);
-  attractTimer = setTimeout(attractHop, 800);
-};
-window.stopAttractMode = function () {
-  window.attractMode = false;
-  clearTimeout(attractTimer);
-  autopilotTarget = null;
-  player.vx = player.vy = 0;
-};
-// Swallow input on the world while signed out (capture phase runs before input.js handlers).
-['mousedown', 'mouseup', 'click', 'wheel', 'touchstart', 'touchmove', 'touchend', 'dblclick', 'contextmenu'].forEach(type =>
-  canvas.addEventListener(type, e => { if (window.attractMode) { e.stopImmediatePropagation(); if (e.cancelable) e.preventDefault(); } }, { capture: true, passive: false }));
-window.addEventListener('keydown', e => {
-  if (window.attractMode && !['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName) && !e.target.isContentEditable) e.stopImmediatePropagation();
-}, { capture: true });
-
-// Explore mode for signed-out visitors: fly freely; the UI limits them to opening one person's details.
-window.guestExplore = false;
-window.startGuestExplore = function () {
-  window.attractMode = false;
-  clearTimeout(attractTimer);
-  autopilotTarget = null;
-  window.guestExplore = true;
-};
-window.stopGuestExplore = function () { window.guestExplore = false; };
 
 // Hooks for the React UI (public/app): fly somewhere, and read the live world without touching engine globals by name.
 window.flyTo = function (x, y, item) {

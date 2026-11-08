@@ -114,7 +114,11 @@ module.exports = function ({ db, store, getLogin, gh = makeGh(), searchGap = () 
             const repos = (await contribsOf(req)).repos.map(r => r.repo);
             const found = await remember(req, 'projectIssues', g => projectIssues(g, repos));
             await store.saveIssues(found, 'project'); // startable, but kept out of everyone's shared list
-        })().catch(e => { if (!e.limited) console.warn('[Missions] project issues failed:', e.message); })
+        })().catch(e => {
+            if (!e.limited) console.warn('[Missions] project issues failed:', e.message);
+            // Remember the miss for 5 minutes (a 30-minute entry that is 25 minutes old), so every open does not retry.
+            cache.set(req.login, { ...cache.get(req.login), projectIssues: { data: [], ts: Date.now() - 25 * 60e3 } });
+        })
             .finally(() => warming.delete(req.login));
     }
 

@@ -34,7 +34,6 @@ function easeOutBack(p) { const c = 1.6; return 1 + (c + 1) * Math.pow(p - 1, 3)
 // Night sky: pure black with the real bright stars (Yale Bright Star Catalog, public/data/sky.json).
 // Star colours come from each star's measured B-V colour index, so most read blue-white and a few
 // giants read orange or red. The sky is a wrapped panorama that drifts slowly with the camera.
-let skyGrad = null, skyGradH = 0; // kept: renderIslandSnapshot saves and restores these
 let SKY = null;
 const SKY_W = 3400, SKY_H = 1700, SKY_PARALLAX = 0.012;
 fetch('data/sky.json').then(r => r.ok ? r.json() : null).then(d => {
@@ -553,10 +552,12 @@ window.renderIslandSnapshot = function (target, width, height, opts = {}) {
   if (!island._rim) prepareIsland(island);
   const off = opts.canvas || document.createElement('canvas'); // opts.canvas: redraw in place (front-page rise-in)
   const dpr = Math.min(2, window.devicePixelRatio || 1);
-  off.width = Math.round(width * dpr); off.height = Math.round(height * dpr);
-  const saved = { canvas, ctx, cam: { ...camera }, born: island._born, labels: window.drawnLabels, sky: skyGrad, skyH: skyGradH };
+  const w = Math.round(width * dpr), h = Math.round(height * dpr);
+  // Resizing a canvas reallocates it; during the front-page rise-in this runs every frame, so only resize on change.
+  if (off.width !== w || off.height !== h) { off.width = w; off.height = h; }
+  else { const c = off.getContext('2d'); c.reset ? c.reset() : (c.setTransform(1, 0, 0, 1, 0, 0), c.globalAlpha = 1, c.clearRect(0, 0, w, h)); } // fresh state, like a new canvas
+  const saved = { canvas, ctx, cam: { ...camera }, born: island._born, labels: window.drawnLabels };
   canvas = off; ctx = off.getContext('2d');
-  skyGrad = null;
   const fit = Math.min(off.width, off.height) / (island.islandRadius * (opts.fit || 3.1));
   window.__snapshotNoSign = opts.sign === false;
   camera.x = island.cx; camera.y = island.cy + island.islandRadius * 0.28; camera.zoom = fit;
@@ -568,7 +569,7 @@ window.renderIslandSnapshot = function (target, width, height, opts = {}) {
   } finally {
     canvas = saved.canvas; ctx = saved.ctx; Object.assign(camera, saved.cam);
     window.__snapshotNoSign = false;
-    island._born = saved.born; window.drawnLabels = saved.labels; skyGrad = saved.sky; skyGradH = saved.skyH;
+    island._born = saved.born; window.drawnLabels = saved.labels;
   }
   off.style.width = width + 'px'; off.style.height = height + 'px';
   return off;

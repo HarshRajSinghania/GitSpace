@@ -14,7 +14,7 @@ const CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET;
 const APP_URL = process.env.APP_URL || `http://localhost:${PORT}`;
 const CALLBACK_URL = `${APP_URL}/auth/callback`;
 
-const isDev = process.env.NODE_ENV !== 'production';
+const isDev = process.env.NODE_ENV === 'development'; // dev only when asked for: an unset NODE_ENV on a host must not lift limits or allow fake logins
 
 const authLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
@@ -144,4 +144,7 @@ process.on('unhandledRejection', (reason, promise) => {
             console.warn('[STARTUP] WARNING: GITHUB_CLIENT_ID or GITHUB_CLIENT_SECRET not set in .env');
         }
     });
-})();
+})().catch(err => {
+    console.error('[STARTUP] Failed to start:', err.message);
+    process.exit(1); // Render restarts a crashed process; a half-started one would look healthy and fail every request
+});

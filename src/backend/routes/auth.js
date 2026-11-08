@@ -28,8 +28,8 @@ module.exports = function(db, CLIENT_ID, CLIENT_SECRET, CALLBACK_URL) {
     router.get('/auth/github', async (req, res) => {
         // Dev mock fallback when credentials are missing
         if (!CLIENT_ID || CLIENT_ID.trim() === '') {
-            if (process.env.NODE_ENV === 'production') {
-                console.error('[Auth] GitHub CLIENT_ID missing in production.');
+            if (process.env.NODE_ENV !== 'development') {
+                console.error('[Auth] GITHUB_CLIENT_ID missing (fake login only when NODE_ENV=development).');
                 return res.status(500).send('Authentication setup failed: GITHUB_CLIENT_ID not set');
             }
             console.log('[Auth] Mocking GitHub login (no CLIENT_ID set).');

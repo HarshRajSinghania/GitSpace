@@ -1,5 +1,5 @@
 // Developer card: opens when you click an island (or pick a developer anywhere).
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Avatar, Box, Button, ButtonBase, Collapse, DialogActions, DialogContent, Skeleton } from '@mui/material';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
@@ -57,6 +57,8 @@ export default function DeveloperCard({ island, onClose, onOpenRepo }) {
   const [profile, setProfile] = useState(null);
   const [error, setError] = useState(null);
   const [readmeOpen, setReadmeOpen] = useState(false);
+  // Parsing and sanitising a README is slow: once per profile, not on every redraw of the card.
+  const readmeHtml = useMemo(() => (profile?.readme ? renderReadme(profile.readme, login) : ''), [profile?.readme, login]);
 
   useEffect(() => {
     if (!island) return;
@@ -67,7 +69,11 @@ export default function DeveloperCard({ island, onClose, onOpenRepo }) {
     if (cached) return;
     let live = true;
     getJSON('/api/profile/' + encodeURIComponent(island.login))
-      .then(p => { profiles.set(island.login, p); if (live) setProfile(p); })
+      .then(p => {
+        if (profiles.size >= 50) profiles.delete(profiles.keys().next().value); // keep memory flat in long sessions
+        profiles.set(island.login, p);
+        if (live) setProfile(p);
+      })
       .catch(e => { if (live) setError(e); });
     return () => { live = false; };
   }, [island]);
@@ -177,7 +183,7 @@ export default function DeveloperCard({ island, onClose, onOpenRepo }) {
           )}>
             {profile.readme
               ? <Collapse in={readmeOpen} unmountOnExit>
-                <Box sx={md} dangerouslySetInnerHTML={{ __html: renderReadme(profile.readme, login) }}
+                <Box sx={md} dangerouslySetInnerHTML={{ __html: readmeHtml }}
                   ref={n => n?.querySelectorAll('img').forEach(img => { img.onerror = () => img.remove(); })} />
               </Collapse>
               : <Muted>{login} has no profile README.</Muted>}

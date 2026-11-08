@@ -47,3 +47,21 @@ test('rate limited: stops without touching anything', async () => {
     assert.strictEqual(saved, null);
     assert.strictEqual(marked, null);
 });
+
+test('a failed second page saves nothing and keeps the old ETag', async () => {
+    const page1 = Array.from({ length: 100 }, (_, i) => ({ name: 'r' + i, language: 'Go', stargazers_count: 1, size: 1, fork: false }));
+    global.fetch = async url => !url.includes('&page=2')
+        ? { status: 200, ok: true, headers: { get: h => (h.toLowerCase() === 'etag' ? '"half"' : null) }, json: async () => page1 }
+        : { status: 502, ok: false, headers: { get: () => null }, json: async () => ({}) };
+    await assert.rejects(refreshOne(db, router, user), /page 2/);
+    assert.strictEqual(saved, null);
+    assert.strictEqual(marked, null);
+});
+
+test('pinned repos saved at sign-in survive the background refresh of a big account', async () => {
+    const many = Array.from({ length: 80 }, (_, i) => ({ name: 'r' + i, language: 'Go', stargazers_count: 80 - i, size: 1, fork: false }));
+    mockFetch(200, many, '"e"');
+    await refreshOne(db, router, { ...user, pinned: ['r79'] }); // r79 has the fewest stars
+    assert.ok(saved[4].some(r => r.name === 'r79'));
+    assert.strictEqual(saved[4].length, 60);
+});
