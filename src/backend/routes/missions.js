@@ -74,10 +74,10 @@ module.exports = function ({ db, store, getLogin, gh = makeGh(), searchGap = () 
     const refreshed = new Map(); // login -> { at, running }
     function refreshFor(req, langs) {
         const r = refreshed.get(req.login);
-        if (r?.running) return r.running;
+        if (r?.running) return r.running; // shortcut: per process; fine on one Render instance
         if (r && Date.now() - r.at < 10 * 60e3) return null;
         const userGh = req.ghToken ? makeGh(undefined, req.ghToken) : gh;
-        const running = refreshIssues(store, { gh: userGh, languages: langs, repoBudget: 60, wait: searchGap })
+        const running = refreshIssues(store, { gh: userGh, languages: langs, repoBudget: 30, wait: searchGap })
             .finally(() => refreshed.set(req.login, { at: Date.now() }));
         if (refreshed.size > 1000) refreshed.clear();
         refreshed.set(req.login, { at: Date.now(), running });
@@ -93,26 +93,39 @@ module.exports = function ({ db, store, getLogin, gh = makeGh(), searchGap = () 
         const issues = rank((await store.openIssues(langs)).filter(usable), langs)
             .filter(i => (perRepo[i.repo] = (perRepo[i.repo] || 0) + 1) <= 2).slice(0, 12);
 
-        // Extra, shown folded below: issues in projects that merged their work before. Skipped if GitHub is busy.
-        let fromProjects = [];
-        try {
-            const repos = (await contribsOf(req)).repos.map(r => r.repo);
-            const found = await remember(req, 'projectIssues', g => projectIssues(g, repos));
-            await store.saveIssues(found, 'project'); // startable, but kept out of everyone's shared list
-            const shown = new Set(issues.map(i => String(i.id)));
-            fromProjects = found.filter(i => usable(i) && !shown.has(String(i.id))).slice(0, 6);
-        } catch (e) {
-            if (!e.limited) throw e;
-        }
+        // Extra, shown folded below: issues in projects that merged their work before. Only if already fetched;
+        // otherwise fetch in the background so this answer never waits on GitHub.
+        const found = peek(req, 'projectIssues');
+        if (!found) warmProjectIssues(req);
+        const shown = new Set(issues.map(i => String(i.id)));
+        const fromProjects = (found || []).filter(i => usable(i) && !shown.has(String(i.id))).slice(0, 6);
         return { languages: langs, issues, fromProjects, refreshedAt: refreshed.get(req.login)?.at || null };
     }
 
+    const peek = (req, key) => {
+        const e = cache.get(req.login)?.[key];
+        return e && Date.now() - e.ts < 30 * 60e3 ? e.data : null;
+    };
+    const warming = new Set();
+    function warmProjectIssues(req) {
+        if (warming.has(req.login)) return;
+        warming.add(req.login);
+        (async () => {
+            const repos = (await contribsOf(req)).repos.map(r => r.repo);
+            const found = await remember(req, 'projectIssues', g => projectIssues(g, repos));
+            await store.saveIssues(found, 'project'); // startable, but kept out of everyone's shared list
+        })().catch(e => { if (!e.limited) console.warn('[Missions] project issues failed:', e.message); })
+            .finally(() => warming.delete(req.login));
+    }
+
     router.get('/api/missions/for-you', handle(async (req, res) => {
-        let data = await forYou(req);
-        // Too few to pick from (new language, or the shared refresh has not covered it yet): fetch now, once.
+        const data = await forYou(req);
+        // Too few to pick from (new language, or the shared refresh has not covered it yet): start fetching now,
+        // in the background. The answer says so; the drawer asks again shortly.
+        data.refreshing = false;
         if (data.issues.length < 6) {
             const run = refreshFor(req, data.languages);
-            if (run) { await run.catch(e => { if (!e.limited) throw e; }); data = await forYou(req); }
+            if (run) { data.refreshing = true; run.catch(e => { if (!e.limited) console.warn('[Missions] refresh failed:', e.message); }); }
         }
         res.json(data);
     }));

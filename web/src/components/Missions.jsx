@@ -124,7 +124,12 @@ export default function Missions({ open, onClose, onMerged }) {
   const load = () => {
     setError(false);
     Promise.all([getJSON('/api/missions/for-you'), getJSON('/api/missions/mine')])
-      .then(([f, m]) => { setForYou(f); setMine(m); })
+      .then(([f, m]) => {
+        setForYou(f);
+        setMine(m);
+        // The server is fetching fresh issues in the background: ask again once it has had time.
+        if (f.refreshing) setTimeout(() => getJSON('/api/missions/for-you').then(setForYou).catch(() => {}), 20000);
+      })
       .catch(() => setError(true));
   };
   const loadDash = () => {
@@ -177,12 +182,12 @@ export default function Missions({ open, onClose, onMerged }) {
       </Muted>
       <Box sx={{ display: 'flex', alignItems: 'center', pr: 1 }}>
         <Box sx={{ flex: 1 }}>{heading(`New beginner issues in ${forYou.languages.join(', ')}`)}</Box>
-        <Button size="small" disabled={refreshing} onClick={refresh} sx={{ color: t.muted, mt: 1 }}>{refreshing ? 'Looking…' : 'Refresh'}</Button>
+        <Button size="small" disabled={refreshing || forYou.refreshing} onClick={refresh} sx={{ color: t.muted, mt: 1 }}>{refreshing || forYou.refreshing ? 'Looking…' : 'Refresh'}</Button>
       </Box>
       {forYou.refreshedAt && <Muted sx={{ px: 1.5, fontSize: 12 }}>Checked GitHub {timeAgo(new Date(forYou.refreshedAt).toISOString()).toLowerCase()}.</Muted>}
       {forYou.issues.length
         ? <Box component="ul" sx={{ listStyle: 'none', m: 0, p: 0 }}>{forYou.issues.map(issueRow)}</Box>
-        : <Muted sx={{ p: 1.5 }}>None open right now. Press Refresh to look again, or check back later.</Muted>}
+        : <Muted sx={{ p: 1.5 }}>{forYou.refreshing ? 'Looking on GitHub for fresh issues. They show up here in a few seconds.' : 'None open right now. Press Refresh to look again, or check back later.'}</Muted>}
       {forYou.fromProjects.length > 0 && <>
         <Button size="small" onClick={() => setShowProjects(v => !v)} sx={{ color: t.muted, mt: 1, ml: 0.5 }}>
           {showProjects ? 'Hide' : 'Show'} issues in projects you contributed to before ({forYou.fromProjects.length})
