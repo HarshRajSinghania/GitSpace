@@ -9,6 +9,8 @@ let activeEngineProcesses = 0;
 const MAX_ENGINE_PROCESSES = 4;
 
 const githubCache = new Map();
+const OWNER_RE = /^[a-z\d](?:[a-z\d-]{0,38})$/i; // GitHub usernames and org names
+const REPO_NAME_RE = /^[\w.-]{1,100}$/;
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const CITIZENS_TTL_MS = 60 * 1000;
 
@@ -57,7 +59,8 @@ module.exports = function (db, heavyLimiter) {
 
     const MAX_ISLAND_REPOS = 60;
 
-    // Pinned repo names via GraphQL (needs the user's token). Empty on any failure.
+    // Pinned repo names via GraphQL (needs the user's token). null when GitHub did not answer, so a failed
+    // lookup never overwrites the pins already saved for this account.
     async function fetchPinnedNames(token) {
         if (!token || token === 'mock_token') return [];
         try {
@@ -66,10 +69,10 @@ module.exports = function (db, heavyLimiter) {
                 headers: { 'Authorization': `bearer ${token}`, 'Content-Type': 'application/json' },
                 body: JSON.stringify({ query: '{ viewer { pinnedItems(first: 6, types: REPOSITORY) { nodes { ... on Repository { name } } } } }' }),
             });
-            if (!r.ok) return [];
+            if (!r.ok) return null;
             const j = await r.json();
             return (j?.data?.viewer?.pinnedItems?.nodes || []).map(n => n && n.name).filter(Boolean);
-        } catch (e) { return []; }
+        } catch (e) { return null; }
     }
 
     // Big accounts show their best repos only: pinned first, then stars, then forks, then most recent push.
@@ -386,34 +389,34 @@ module.exports = function (db, heavyLimiter) {
                             return res.status(rRes.status).json({ error: 'GitHub API error' });
                         }
                         const pageData = await rRes.json();
-                        reposData.push(...pageData);
+                        // Keep only what the island needs: whole GitHub repo objects made the cache use hundreds of MB.
+                        reposData.push(...pageData.map(({ name, fork, stargazers_count, forks_count, size, language, pushed_at, html_url, description, updated_at }) =>
+                            ({ name, fork, stargazers_count, forks_count, size, language, pushed_at, html_url, description, updated_at })));
                         if (pageData.length < 100) break;
                     }
                     setCache(cacheKey, reposData);
                 }
             }
 
-            const existingUser = await db.getUser(userData.login);
-            let baseX, baseY;
             // Layout is translation-invariant, so build it at the origin first to learn the island size.
             reposData = reposData.filter(r => !r.fork); // forks never become buildings
-            if (reposData.length > MAX_ISLAND_REPOS) reposData = pickIslandRepos(reposData, await fetchPinnedNames(req.session.token));
+            const pinned = await fetchPinnedNames(req.session.token); // saved, so the 6-hourly refresh keeps them too
+            if (reposData.length > MAX_ISLAND_REPOS) reposData = pickIslandRepos(reposData, pinned || (await db.getUser(userData.login))?.pinned || []);
             const local = await generateLayoutEngine(reposData, 0, 0);
             const spread = local.repos.reduce((m, r) => Math.max(m, Math.hypot(r.x, r.y)), 0);
-            if (existingUser && existingUser.cx !== undefined && existingUser.cx !== null && existingUser.cy !== undefined && existingUser.cy !== null) {
-                baseX = existingUser.cx;
-                baseY = existingUser.cy;
-            } else {
+            const place = async () => {
+                const existingUser = await db.getUser(userData.login);
                 // New islands spiral out from the centre so the map stays dense.
-                const startX = 0;
-                const startY = 0;
-                const pos = await db.findFreeSpot(startX, startY, spread);
-                baseX = pos.x;
-                baseY = pos.y;
-            }
-
-            const layout = { cx: baseX, cy: baseY, repos: local.repos.map(r => ({ ...r, x: r.x + baseX, y: r.y + baseY })) };
-            await db.saveUserLayout(userData.login, layout.cx, layout.cy, userData.avatar_url, layout.repos);
+                const pos = existingUser?.cx != null && existingUser?.cy != null
+                    ? { x: existingUser.cx, y: existingUser.cy }
+                    : await db.findFreeSpot(0, 0, spread);
+                const layout = { cx: pos.x, cy: pos.y, repos: local.repos.map(r => ({ ...r, x: r.x + pos.x, y: r.y + pos.y })) };
+                await db.saveUserLayout(userData.login, layout.cx, layout.cy, userData.avatar_url, layout.repos, { pinned: pinned ?? undefined });
+                return layout;
+            };
+            // Picking a free spot and taking it must happen together, or two new users can get the same spot.
+            const existing = await db.getUser(userData.login);
+            const layout = existing?.cx != null ? await place() : await db.withSpawnLock(place);
 
             res.json({ success: true, cx: layout.cx, cy: layout.cy, repos: layout.repos });
         } catch (err) {
@@ -497,15 +500,20 @@ module.exports = function (db, heavyLimiter) {
     router.get('/api/preview/:login', heavyLimiter || ((req, res, next) => next()), async (req, res) => {
         try {
             const login = String(req.params.login || '');
-            if (!/^[a-z\d](?:[a-z\d-]{0,38})$/i.test(login)) return res.status(400).json({ error: 'That is not a valid GitHub username.' });
+            if (!OWNER_RE.test(login)) return res.status(400).json({ error: 'That is not a valid GitHub username.' });
             const cacheKey = 'preview:' + login.toLowerCase();
             const cached = getCached(cacheKey, 60 * 60 * 1000);
+            // "Not found" is remembered too, so made-up names cannot burn the server's GitHub allowance.
+            if (cached?.notFound) return res.status(404).json({ error: 'No GitHub account with that name.' });
             if (cached) return res.json(cached);
 
             const session = await getSession(req);
             const token = session?.token;
             const uRes = await githubFetch(`https://api.github.com/users/${encodeURIComponent(login)}`, token);
-            if (uRes.status === 404) return res.status(404).json({ error: 'No GitHub account with that name.' });
+            if (uRes.status === 404) {
+                setCache(cacheKey, { notFound: true });
+                return res.status(404).json({ error: 'No GitHub account with that name.' });
+            }
             if (uRes.status === 403 || uRes.status === 429) return res.status(503).json({ error: 'GitHub is busy right now. Try again in a minute.' });
             if (!uRes.ok) return res.status(502).json({ error: 'Could not reach GitHub.' });
             const u = await uRes.json();
@@ -535,7 +543,7 @@ module.exports = function (db, heavyLimiter) {
     router.get('/api/profile/:login', heavyLimiter || ((req, res, next) => next()), async (req, res) => {
         try {
             const login = String(req.params.login || '');
-            if (!/^[a-z\d](?:[a-z\d-]{0,38})$/i.test(login)) return res.status(400).json({ error: 'Invalid username' });
+            if (!OWNER_RE.test(login)) return res.status(400).json({ error: 'Invalid username' });
             const user = await db.getUser(login);
             if (!user) return res.status(404).json({ error: 'This developer is not on the map yet.' });
 
@@ -614,6 +622,10 @@ module.exports = function (db, heavyLimiter) {
         if (!name) {
             return res.status(400).json({ error: 'Repository name required (e.g. repo=owner/name)' });
         }
+        // These go into a GitHub URL with the visitor's token: "." or ".." would walk to other API paths.
+        if (!REPO_NAME_RE.test(name) || /^\.\.?$/.test(name) || (owner && !OWNER_RE.test(owner))) {
+            return res.status(400).json({ error: 'That is not a valid GitHub owner/name' });
+        }
 
         const cacheKey = `review:${owner || 'unknown'}:${name}`;
         const cached = getCached(cacheKey);
@@ -675,7 +687,7 @@ module.exports = function (db, heavyLimiter) {
             }
 
             // If mock token or demo mode fallback
-            if (!repoData && process.env.NODE_ENV !== 'production' && (token === 'mock_token' || (!owner && name.startsWith('mock-')))) {
+            if (!repoData && process.env.NODE_ENV === 'development' && (token === 'mock_token' || (!owner && name.startsWith('mock-')))) {
                 owner = owner || 'demo';
                 repoData = {
                     name,

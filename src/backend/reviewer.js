@@ -19,7 +19,7 @@ function formatBytes(bytes) {
     return (kb / (1024 * 1024)).toFixed(2) + ' GB';
 }
 
-function analyzeRepo(repoData, languagesData = {}, commitsData = []) {
+function analyzeRepo(repoData, languagesData = {}) {
     let score = 50; // Baseline
     const insights = [];
     const recommendations = [];

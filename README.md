@@ -23,6 +23,16 @@ Whether you're visiting your own island or discovering new citizens of the galax
 - **🏆 Unlock Achievements**: Play while you explore! Unlock achievements like *"Space Marathon"* (traveling 100k units), *"The Architect"* (inspecting 10 repos), or *"The Polyglot"* (mastering 4+ languages).
 - **🔥 Heatmap Rings & Activity**: Islands actually *pulse* with energy if the developer is active, and individual repositories glow based on how recently they were updated.
 
+## 🚩 Your First Open-Source PR
+
+Press **First PR** in the top bar (sign in with GitHub first).
+
+- **For you**: beginner issues ("good first issue", "beginner") in the languages your island is built from, newest first. Only active, real projects make the list: 50 to 50,000 stars, pushed in the last 30 days, not a fork or template. **Refresh** fetches fresh ones from GitHub on the spot.
+- **I'm on it**: takes the issue as a mission (2 at a time). GitSpace checks GitHub first, so you never take an issue someone else was just assigned, and at most 2 GitSpace people work on one issue.
+- **Merged counts**: every hour GitSpace looks for your PR. It counts only if it is yours, in that repo, says `Fixes #N` (or links the issue) and is merged after you took the mission. A PR closed without merging puts the mission back to "working on it". If the issue is closed or given to someone else, the mission ends; 45 days with no PR, it expires.
+- **Your contributions**: after your first merge, a dashboard of every PR you got merged into other people's projects: PRs, projects, commits, merges per month, and links. **For you** then also offers issues in projects that already merged your work.
+- The top bar button turns into your merged count.
+
 ---
 
 ## 🛠️ Tech Stack
@@ -88,6 +98,8 @@ Configure your `.env` variables:
 | `PORT` | The port the Node server runs on | `3000` |
 | `DATABASE_URL` | PostgreSQL connection string | `postgresql://user:pass@localhost:5432/gitspace` |
 | `APP_URL` | The callback base URL | `http://localhost:3000` |
+| `GITHUB_TOKEN` | Optional, read-only. Lets the 6-hourly issue refresh and island refresh cover far more repos (5,000 GitHub requests an hour instead of 60) | `github_pat_...` |
+| `MISSIONS_DISABLED` | Optional. `true` turns off the background issue refresh and PR checks | `true` |
 
 *💡 Tip: Don't want to set up Postgres right now? Set `DATABASE_URL=sandbox` to use the built-in local JSON database for instant development!*
 
@@ -150,9 +162,12 @@ User Action (Browser Canvas)
 | Command | Description |
 | --- | --- |
 | `npm start` | Start the backend Express server |
-| `npm run migrate` | Migrate data from JSON sandbox to PostgreSQL |
-| `npm run seed` | Seed the database with sample users and repositories |
+| `npm test` | Run the tests (`node --test`) |
+| `npm run build` | Build the C++ engine (if `g++` is there) and the React bundle |
+| `npm run build:web` | Build only the React bundle into `public/app/` |
+| `npm run dev:web` | Rebuild the React bundle on every change |
 | `npm run seed:stress` | Stress test database seeding |
+| `npm run compact` | Pack existing islands closer together (`-- --apply` to write) |
 
 ## 🧰 Troubleshooting
 

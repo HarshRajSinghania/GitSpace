@@ -42,7 +42,6 @@ export default function FrontPage({ signedIn, stats, onExplore, onClose }) {
   const shownIsland = useRef(null);
   const riseToken = useRef(0);
 
-  const [example, setExample] = useState(null); // hero island
   const [compareDev, setCompareDev] = useState(null);
   const [cardDevs, setCardDevs] = useState([]);
   const [value, setValue] = useState('');
@@ -62,7 +61,6 @@ export default function FrontPage({ signedIn, stats, onExplore, onClose }) {
       .then(d => ({ ...d, onMap: true }))
       .catch(() => getJSON('/api/preview/' + EXAMPLE).then(d => ({ ...d, onMap: false })))
       .then(d => {
-        setExample(d);
         showIsland(toIsland(d), { login: d.login, onMap: d.onMap, x: d.cx, y: d.cy });
       })
       .catch(() => {});

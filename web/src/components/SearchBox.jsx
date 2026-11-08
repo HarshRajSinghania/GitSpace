@@ -32,18 +32,21 @@ export default forwardRef(function SearchBox({ onPick }, ref) {
     const q = text.trim();
     if (q.length < 2) { setOptions([]); setLoading(false); return; }
     setLoading(true);
+    let stale = false; // a slower answer to an older query must not replace the newer one
     const timer = setTimeout(async () => {
       try {
         const res = await getJSON('/api/search?q=' + encodeURIComponent(q));
+        if (stale) return;
         setOptions(Array.isArray(res) ? res.slice(0, 8) : []);
         setFailed(false);
       } catch (e) {
+        if (stale) return;
         setOptions([]);
         setFailed(true);
       }
       setLoading(false);
     }, 220);
-    return () => clearTimeout(timer);
+    return () => { stale = true; clearTimeout(timer); };
   }, [text]);
 
   const q = text.trim();

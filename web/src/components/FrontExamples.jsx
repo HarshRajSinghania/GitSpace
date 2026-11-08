@@ -8,7 +8,10 @@ import { renderPostcard } from '../postcard.js';
 
 const userFetches = new Map();
 export const getUser = login => {
-  if (!userFetches.has(login)) userFetches.set(login, getJSON('/api/user/' + encodeURIComponent(login)).catch(e => { userFetches.delete(login); throw e; }));
+  if (!userFetches.has(login)) {
+    if (userFetches.size >= 50) userFetches.delete(userFetches.keys().next().value); // keep memory flat
+    userFetches.set(login, getJSON('/api/user/' + encodeURIComponent(login)).catch(e => { userFetches.delete(login); throw e; }));
+  }
   return userFetches.get(login);
 };
 

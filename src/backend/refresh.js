@@ -29,7 +29,8 @@ async function fetchRepos(login, etag) {
     const newEtag = first.headers.get('etag');
     for (let page = 2; page <= 3 && repos.length === (page - 1) * 100; page++) {
         const r = await fetch(`${base}&page=${page}`, { headers });
-        if (!r.ok) break;
+        // A missing page must not be saved: its ETag would mark the half island as "unchanged" for good.
+        if (!r.ok) throw new Error(`GitHub ${r.status} on page ${page} for ${login}`);
         repos.push(...await r.json());
     }
     return { repos, etag: newEtag };
@@ -43,7 +44,7 @@ async function refreshOne(db, router, user) {
         return result.gone ? 'gone' : 'unchanged';
     }
     const own = result.repos.filter(r => !r.fork); // forks never become buildings
-    const picked = router.pickIslandRepos(own, []);
+    const picked = router.pickIslandRepos(own, user.pinned || []);
     const layout = router.generateLayoutJS(picked, user.cx, user.cy);
     await db.saveUserLayout(user.login, user.cx, user.cy, user.avatar, layout.repos, { touchLogin: false });
     await db.markRefreshed(user.login, result.etag);

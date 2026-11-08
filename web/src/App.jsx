@@ -50,9 +50,6 @@ export default function App() {
   }, []);
 
   const startGuest = () => {
-    window.stopAttractMode?.();
-    window.startGuestExplore?.();
-    window.isGuest = true;
     setGuest(true);
     setView('world');
   };
@@ -170,8 +167,6 @@ export default function App() {
     window.showProfileModal = showProfile;
     window.toggleShortcuts = () => setShortcuts(v => !v);
     window.showToast = msg => setSnack({ msg, key: performance.now() });
-    window.showOnboarding = () => setOnboard(true);
-    window.openWhereTo = seed => search.current?.focus(seed || '');
   });
 
   // Space toggles the ring, "/" or typing a name searches, R reviews a repo; clicking the ship toggles the ring.

@@ -61,51 +61,6 @@ function loadSandboxData() {
     return cachedSandboxData;
 }
 
-let sandboxTrie = null;
-let lastTrieBuildTime = 0;
-
-class BackendTrieNode {
-    constructor() {
-        this.children = {};
-        this.items = [];
-    }
-}
-
-function insertBackendTrie(trie, key, item) {
-    let node = trie;
-    for (const char of key) {
-        if (!node.children[char]) node.children[char] = new BackendTrieNode();
-        node = node.children[char];
-        if (node.items.length < 10) node.items.push(item);
-    }
-}
-
-function searchBackendTrie(trie, prefix) {
-    let node = trie;
-    for (const char of prefix) {
-        if (!node.children[char]) return [];
-        node = node.children[char];
-    }
-    return node.items;
-}
-
-function buildSandboxTrie(data) {
-    const root = new BackendTrieNode();
-    for (const u of Object.values(data.users)) {
-        insertBackendTrie(root, u.login.toLowerCase(), {
-            type: 'user', login: u.login, avatar: u.avatar, primaryLanguage: u.primary_language,
-            x: u.cx, y: u.cy, repoCount: 0, totalStars: 0
-        });
-    }
-    for (const r of data.repos) {
-        insertBackendTrie(root, r.name.toLowerCase(), {
-            type: 'repo', login: r.login, name: r.name, language: r.language, url: r.url,
-            size: r.size, stars: r.stars, x: r.x, y: r.y
-        });
-    }
-    return root;
-}
-
 function saveSandboxData(data) {
     cachedSandboxData = data;
     if (sandboxLoadFailed) {
@@ -175,7 +130,7 @@ async function initDb() {
             console.error(`[DB] Connection failed. Retries left: ${retries - 1}. Error: ${err.message}`);
             retries--;
             if (retries === 0) {
-                if (process.env.NODE_ENV === 'production') {
+                if (process.env.NODE_ENV !== 'development') {
                     // Render's disk is wiped on every deploy, so a sandbox fallback would silently lose data
                     console.error('[DB] FATAL: Could not connect to database. Exiting.');
                     process.exit(1);
@@ -247,6 +202,7 @@ async function initDb() {
             await client.query(`ALTER TABLE repos ADD COLUMN IF NOT EXISTS updated_at VARCHAR(100);`);
             await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS refreshed_at TIMESTAMPTZ;`);
             await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS repos_etag TEXT;`);
+            await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS pinned TEXT[] NOT NULL DEFAULT '{}';`);
         } catch (e) {
             console.log('[DB] Note: Migration for repos table description/updated_at skipped or failed', e.message);
         }
@@ -262,6 +218,7 @@ async function initDb() {
         console.log('[DB] PostgreSQL Schema Ready.');
     } catch (err) {
         console.error('[DB] Error initializing database:', err.message);
+        throw err; // without its tables every request fails; stop so the host restarts us instead of serving errors
     } finally {
         if (client) client.release();
     }
@@ -309,23 +266,30 @@ async function deleteSession(sid) {
 }
 
 // opts.touchLogin = false is used by the background refresh so it does not count as the person being active.
+// The language the island is mostly built from, weighted by size and stars. "Other" only if nothing else.
+function primaryLanguageOf(repos) {
+    const langCounts = {};
+    for (const r of repos) {
+        const lang = r.language || 'Other';
+        langCounts[lang] = (langCounts[lang] || 0) + (r.size || 1) + (r.stars || 0) * 100;
+    }
+    let primaryLang = 'Other';
+    let maxCount = 0;
+    for (const [lang, count] of Object.entries(langCounts)) {
+        if (count > maxCount && lang !== 'Other') {
+            primaryLang = lang;
+            maxCount = count;
+        }
+    }
+    return primaryLang;
+}
+
+// opts.touchLogin: false for background refreshes. opts.pinned: the account's pinned repo names, kept so the
+// 6-hourly refresh picks the same repos as sign-in (undefined keeps what is stored).
 async function saveUserLayout(login, cx, cy, avatar, repos, opts = {}) {
     const touchLogin = opts.touchLogin !== false;
+    const primaryLang = primaryLanguageOf(repos);
     if (isSandbox) {
-        const langCounts = {};
-        for (const r of repos) {
-            const lang = r.language || 'Other';
-            langCounts[lang] = (langCounts[lang] || 0) + (r.size || 1) + (r.stars || 0) * 100;
-        }
-        let primaryLang = 'Other';
-        let maxCount = 0;
-        for (const [lang, count] of Object.entries(langCounts)) {
-            if (count > maxCount && lang !== 'Other') {
-                primaryLang = lang;
-                maxCount = count;
-            }
-        }
-
         const data = loadSandboxData();
         const now = Date.now();
 
@@ -338,7 +302,8 @@ async function saveUserLayout(login, cx, cy, avatar, repos, opts = {}) {
             first_seen: data.users[login] ? data.users[login].first_seen : now,
             last_login: touchLogin || !data.users[login] ? now : data.users[login].last_login,
             refreshed_at: data.users[login] ? data.users[login].refreshed_at : null,
-            repos_etag: data.users[login] ? data.users[login].repos_etag : null
+            repos_etag: data.users[login] ? data.users[login].repos_etag : null,
+            pinned: opts.pinned ?? data.users[login]?.pinned ?? []
         };
 
         data.repos = data.repos.filter(r => r.login !== login);
@@ -364,35 +329,22 @@ async function saveUserLayout(login, cx, cy, avatar, repos, opts = {}) {
         return;
     }
 
-    const langCounts = {};
-    for (const r of repos) {
-        const lang = r.language || 'Other';
-        langCounts[lang] = (langCounts[lang] || 0) + (r.size || 1) + (r.stars || 0) * 100;
-    }
-    let primaryLang = 'Other';
-    let maxCount = 0;
-    for (const [lang, count] of Object.entries(langCounts)) {
-        if (count > maxCount && lang !== 'Other') {
-            primaryLang = lang;
-            maxCount = count;
-        }
-    }
-
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
 
         const now = Date.now();
         await client.query(`
-            INSERT INTO users (login, cx, cy, avatar, primary_language, first_seen, last_login)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
-            ON CONFLICT (login) DO UPDATE SET 
-                cx = EXCLUDED.cx, 
-                cy = EXCLUDED.cy, 
-                avatar = EXCLUDED.avatar, 
+            INSERT INTO users (login, cx, cy, avatar, primary_language, first_seen, last_login, pinned)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($9::text[], '{}'))
+            ON CONFLICT (login) DO UPDATE SET
+                cx = EXCLUDED.cx,
+                cy = EXCLUDED.cy,
+                avatar = EXCLUDED.avatar,
                 primary_language = EXCLUDED.primary_language,
-                last_login = CASE WHEN $8 THEN EXCLUDED.last_login ELSE users.last_login END
-        `, [login, cx, cy, avatar, primaryLang, now, now, touchLogin]);
+                last_login = CASE WHEN $8 THEN EXCLUDED.last_login ELSE users.last_login END,
+                pinned = COALESCE($9::text[], users.pinned)
+        `, [login, cx, cy, avatar, primaryLang, now, now, touchLogin, opts.pinned ?? null]);
 
         await client.query(`DELETE FROM repos WHERE login = $1`, [login]);
 
@@ -760,10 +712,10 @@ async function getRefreshQueue(limit, staleHours) {
             .filter(u => !u.refreshed_at || u.refreshed_at < cutoff)
             .sort((a, b) => (a.refreshed_at || 0) - (b.refreshed_at || 0))
             .slice(0, limit)
-            .map(u => ({ login: u.login, cx: u.cx, cy: u.cy, avatar: u.avatar, repos_etag: u.repos_etag || null }));
+            .map(u => ({ login: u.login, cx: u.cx, cy: u.cy, avatar: u.avatar, repos_etag: u.repos_etag || null, pinned: u.pinned || [] }));
     }
     const res = await pool.query(
-        `SELECT login, cx, cy, avatar, repos_etag FROM users
+        `SELECT login, cx, cy, avatar, repos_etag, pinned FROM users
          WHERE refreshed_at IS NULL OR refreshed_at < to_timestamp($1 / 1000.0)
          ORDER BY refreshed_at ASC NULLS FIRST LIMIT $2`, [cutoff, limit]);
     return res.rows;
@@ -779,6 +731,25 @@ async function markRefreshed(login, etag) {
 }
 
 // Returns a release function if this process got the lock, or null if another one holds it.
+// Runs fn while holding the one "place a new island" lock, so two sign-ins in the same second cannot both
+// pick the same free spot. A queue in this process, plus a Postgres advisory lock for other processes.
+let spawnQueue = Promise.resolve();
+function withSpawnLock(fn) {
+    const run = spawnQueue.then(async () => {
+        if (isSandbox) return fn();
+        const client = await pool.connect();
+        try {
+            await client.query(`SELECT pg_advisory_lock(7331)`);
+            return await fn();
+        } finally {
+            await client.query(`SELECT pg_advisory_unlock(7331)`).catch(() => {});
+            client.release();
+        }
+    });
+    spawnQueue = run.catch(() => {});
+    return run;
+}
+
 async function tryJobLock(name) {
     if (isSandbox) return async () => {};
     let key = 0;
@@ -795,6 +766,7 @@ module.exports = {
     getRefreshQueue,
     markRefreshed,
     tryJobLock,
+    withSpawnLock,
     initDb,
     createSession,
     getSessionById,

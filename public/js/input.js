@@ -1,8 +1,3 @@
-window.addEventListener('resize', () => {
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
-});
-
 window.addEventListener('keydown', e => {
   if (['INPUT', 'TEXTAREA'].includes(e.target.tagName) && e.target.type !== 'range') return;
   if (window.gsModalOpen) return; // a panel is open; keys belong to it, not the ship
@@ -105,13 +100,13 @@ canvas.addEventListener('mouseup', e => {
 
     const hit = findBuildingAtPoint(mx, my);
     if (hit && hit.building) {
-      openModalForItem({ ...hit.building, type: 'repo', login: hit.island.login });
+      window.openModalForItem?.({ ...hit.building, type: 'repo', login: hit.island.login }); // undefined until the UI has loaded
       return;
     }
 
     const island = findIslandAtPoint(mx, my);
     if (island) {
-      showProfileModal(island);
+      window.showProfileModal?.(island);
     }
   }
 });
@@ -225,7 +220,7 @@ canvas.addEventListener('touchend', e => {
       if (window.minimapClick && window.minimapClick(mx, my)) { window.isDragging = false; previousTouch = null; window.touchJoystick = null; return; }
       const hit = findBuildingAtPoint(mx, my);
       if (hit && hit.building) {
-        openModalForItem({ ...hit.building, type: 'repo', login: hit.island.login });
+        window.openModalForItem?.({ ...hit.building, type: 'repo', login: hit.island.login }); // undefined until the UI has loaded
         
         window.isDragging = false;
         previousTouch = null;
@@ -233,7 +228,7 @@ canvas.addEventListener('touchend', e => {
         return;
       }
       const island = findIslandAtPoint(mx, my);
-      if (island) showProfileModal(island);
+      if (island) window.showProfileModal?.(island);
     }
     window.isDragging = false;
     previousTouch = null;

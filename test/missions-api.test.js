@@ -17,6 +17,8 @@ const issue = (id, over = {}) => ({
     repo_stars: 300, repo_pushed_at: new Date().toISOString(), comments: 0, created_at: new Date(Date.now() - 5 * 864e5).toISOString(), ...over,
 });
 
+// Ask again until the background work shows up (or give up after 2 s).
+async function until(ask, ok) { for (let i = 0; i < 40; i++) { const r = await ask(); if (ok(r)) return r; await new Promise(z => setTimeout(z, 50)); } return ask(); }
 let server, base, ghState, ghFails = false, ghBusy = false, freshKotlin = false;
 const call = (p, login, method = 'GET') => fetch(base + p, { method, headers: login ? { 'x-login': login } : {} }).then(async r => ({ status: r.status, body: await r.json() }));
 
@@ -116,7 +118,8 @@ test('after a merge: for-you also offers issues from that project, kept out of e
     const data = db.raw().loadSandboxData();
     data.users.fay = { login: 'fay', cx: 0, cy: 0 };
     db.raw().saveSandboxData(data);
-    const r = await call('/api/missions/for-you', 'fay');
+    assert.deepEqual((await call('/api/missions/for-you', 'fay')).body.fromProjects, []); // fetched in the background, never waited on
+    const r = await until(() => call('/api/missions/for-you', 'fay'), r => r.body.fromProjects.length);
     assert.deepEqual(r.body.fromProjects.map(i => [i.id, i.repo]), [[501, 'kind/proj']]);
     assert.ok(!r.body.issues.some(i => i.id === 501)); // not listed twice
     assert.equal((await store.getIssue(501)).state, 'project');
@@ -152,8 +155,9 @@ test('few issues for their languages: for-you fetches fresh ones right away; Ref
     data.repos.push({ login: 'hal', name: 'h', language: 'Kotlin' });
     db.raw().saveSandboxData(data);
     freshKotlin = true;
-    const r = await call('/api/missions/for-you', 'hal');
-    assert.deepEqual(r.body.languages, ['Kotlin']);
+    const first = await call('/api/missions/for-you', 'hal');
+    assert.deepEqual([first.body.languages, first.body.refreshing], [['Kotlin'], true]); // answers at once, fetches behind
+    const r = await until(() => call('/api/missions/for-you', 'hal'), r => r.body.issues.length);
     assert.deepEqual(r.body.issues.map(i => i.id), [701]);
     assert.ok(r.body.refreshedAt);
     const again = await call('/api/missions/refresh', 'hal', 'POST');
