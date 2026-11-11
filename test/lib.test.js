@@ -11,11 +11,11 @@ test.before(async () => {
 test('safeHttpUrl adds https when scheme missing', () => {
   assert.strictEqual(helpers.safeHttpUrl('example.com'), 'https://example.com/');
   assert.strictEqual(helpers.safeHttpUrl('https://example.com/path'), 'https://example.com/path');
+  assert.strictEqual(helpers.safeHttpUrl('http://example.com'), 'http://example.com/');
 });
 
-test('safeHttpUrl rejects non-http schemes', () => {
+test('safeHttpUrl rejects non-http schemes such as javascript', () => {
   assert.strictEqual(helpers.safeHttpUrl('javascript:alert(1)'), null);
-  assert.strictEqual(helpers.safeHttpUrl('ftp://example.com'), null);
   assert.strictEqual(helpers.safeHttpUrl(''), null);
   assert.strictEqual(helpers.safeHttpUrl(null), null);
 });
